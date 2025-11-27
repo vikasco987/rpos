@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getAuth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
 
-export async function GET(req: NextRequest) {
+export async function GET(req: Request) {
   try {
     const { userId } = getAuth(req);
 
@@ -10,13 +10,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const deletedBills = await prisma.deleteHistory.findMany({
-      where: { deletedBy: userId },
-      orderBy: { deletedAt: "desc" },  // ✅ FIXED
+    const deleted = await prisma.deleteHistory.findMany({
+      orderBy: { deletedAt: "desc" }, // FIXED
     });
 
-    return NextResponse.json({ success: true, data: deletedBills });
-  } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ deleted });
+  } catch (err) {
+    console.error("FETCH DELETE HISTORY ERROR →", err);
+    return NextResponse.json(
+      { error: "Server error", details: String(err) },
+      { status: 500 }
+    );
   }
 }
