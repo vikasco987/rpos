@@ -13,10 +13,10 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Params may be Promise in latest Next.js App Router
+    // Next.js may wrap params in a Promise
     const { id: restoreId } = await params;
 
-    // 1️⃣ Fetch deleted snapshot
+    // 1️⃣ Fetch deleted bill snapshot
     const entry = await prisma.deleteHistory.findUnique({
       where: { id: restoreId },
     });
@@ -27,47 +27,46 @@ export async function POST(
 
     const snap: any = entry.snapshot;
 
-    // 2️⃣ Restore BILL
-    await prisma.bill.create({
+    // 2️⃣ Restore BILL (removed resumedBy & resumedAt)
+    const restoredBill = await prisma.bill.create({
       data: {
         id: snap.id,
         userId: snap.userId,
         clerkUserId: snap.clerkUserId ?? null,
         customerId: snap.customerId ?? null,
+
         total: snap.total ?? 0,
         discount: snap.discount ?? null,
         gst: snap.gst ?? null,
         grandTotal: snap.grandTotal ?? null,
-        paymentStatus: snap.paymentStatus ?? "pending",
+        paymentStatus: snap.paymentStatus ?? "PENDING",
         paymentMode: snap.paymentMode ?? null,
         notes: snap.notes ?? null,
 
-        dueDate: snap.dueDate ? new Date(snap.dueDate) : null,
         holdBy: snap.holdBy ?? null,
         holdAt: snap.holdAt ? new Date(snap.holdAt) : null,
-        resumedBy: snap.resumedBy ?? null,
-        resumedAt: snap.resumedAt ? new Date(snap.resumedAt) : null,
 
         createdAt: snap.createdAt ? new Date(snap.createdAt) : new Date(),
+        updatedAt: new Date(),
       },
     });
 
-    // 3️⃣ Restore PRODUCTS (loop – Mongo safe)
+    // 3️⃣ Restore BILL PRODUCTS
     if (snap.products && snap.products.length > 0) {
-      for (const p of snap.products) {
-        await prisma.billProduct.create({
-          data: {
-            id: p.id,
-            billId: snap.id,
-            itemId: p.itemId,
-            name: p.name,
-            quantity: p.quantity,
-            price: p.price,
-            gst: p.gst ?? 0,
-            discount: p.discount ?? 0,
-            total: p.total ?? 0,
-          },
-        });
+      const productsData = snap.products.map((item: any) => ({
+        id: item.id,
+        billId: snap.id,
+        itemId: item.itemId,
+        quantity: item.quantity,
+        price: item.price,
+        gst: item.gst ?? null,
+        discount: item.discount ?? null,
+        createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+      }));
+
+      // MongoDB: createMany CANNOT use skipDuplicates
+      for (const p of productsData) {
+        await prisma.billProduct.create({ data: p });
       }
     }
 
@@ -79,8 +78,7 @@ export async function POST(
             id: pay.id,
             billId: snap.id,
             amount: pay.amount,
-            mode: pay.mode ?? "cash",
-            status: pay.status ?? "completed",
+            mode: pay.mode,
             createdAt: pay.createdAt ? new Date(pay.createdAt) : new Date(),
           },
         });
@@ -95,14 +93,14 @@ export async function POST(
             id: h.id,
             billId: snap.id,
             action: h.action,
-            userId: h.userId ?? null,
-            timestamp: h.timestamp ? new Date(h.timestamp) : new Date(),
+            message: h.message,
+            createdAt: h.createdAt ? new Date(h.createdAt) : new Date(),
           },
         });
       }
     }
 
-    // 6️⃣ Delete from deleteHistory
+    // 6️⃣ Delete restore entry
     await prisma.deleteHistory.delete({
       where: { id: restoreId },
     });
@@ -110,9 +108,10 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: "Bill restored successfully",
+      data: restoredBill,
     });
   } catch (error) {
     console.error("RESTORE ERROR:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
